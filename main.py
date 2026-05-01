@@ -5,12 +5,13 @@ BrahmAstra — TradingView-independent signal engine.
 Commands:
   python main.py backtest --from 2026-04-01 --to 2026-04-25
   python main.py backtest --from 2026-04-21 --to 2026-04-25  (single week)
+  python main.py live
+  python main.py live --config config.yaml --verbose
 """
 
 import argparse
 import logging
 import sys
-from pathlib import Path
 
 import yaml
 
@@ -33,8 +34,13 @@ def main():
                     metavar="YYYY-MM-DD", help="Start date (IST)")
     bt.add_argument("--to",   dest="to_date",   required=True,
                     metavar="YYYY-MM-DD", help="End date (IST)")
-    bt.add_argument("--config", default="config.yaml", help="Config file path")
-    bt.add_argument("--verbose", action="store_true", help="Debug logging")
+    bt.add_argument("--config",  default="config.yaml", help="Config file path")
+    bt.add_argument("--verbose", action="store_true",   help="Debug logging")
+
+    # ── live ──────────────────────────────────────────────────────────────────
+    lv = sub.add_parser("live", help="Run live trading engine")
+    lv.add_argument("--config",  default="config.yaml", help="Config file path")
+    lv.add_argument("--verbose", action="store_true",   help="Debug logging")
 
     args = parser.parse_args()
 
@@ -54,6 +60,11 @@ def main():
     if args.command == "backtest":
         from engine.backtester import run_backtest
         run_backtest(config, args.from_date, args.to_date)
+
+    elif args.command == "live":
+        from engine.live_runner import LiveRunner
+        runner = LiveRunner(config)
+        runner.start()
 
 
 if __name__ == "__main__":
