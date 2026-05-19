@@ -61,7 +61,7 @@ class SignalEngine:
             # Position state
             "in_buy": False,
             "in_sell": False,
-            "allow_reentry": True,
+            "allow_reentry": False,
             # Entry metadata
             "entry_bar_index": None,
             "signal_candle_high": None,
@@ -223,9 +223,9 @@ class SignalEngine:
                           close_pos <= p["sell_close_pos_max"] and
                           body_pct  >= p["min_body_pct"])
 
-        # ── 12. Quality scores (0–10, 15m HTF slot fixed at 0 since disabled) ─
-        htf_buy_ok  = True   # 15m filter disabled; slot still counted as pass
-        htf_sell_ok = True
+        # ── 12. Quality scores (0–10) ─────────────────────────────────────────
+        htf_buy_ok  = bool(row["htf_buy_ok"])
+        htf_sell_ok = bool(row["htf_sell_ok"])
 
         buy_quality_score = sum([
             close > ema_slow,
@@ -276,7 +276,9 @@ class SignalEngine:
             buy_ok  = buy_ok  and buy_breakout_ok
             sell_ok = sell_ok and sell_breakout_ok
 
-        # 15m filter skipped (use_15m_filter always False for Phase 1)
+        if p["use_15m_filter"]:
+            buy_ok  = buy_ok  and htf_buy_ok
+            sell_ok = sell_ok and htf_sell_ok
 
         if p["use_quality_filter"]:
             buy_ok  = buy_ok  and buy_quality_score  >= p["min_quality_score"]

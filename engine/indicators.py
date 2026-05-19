@@ -337,4 +337,50 @@ def compute_indicators(df: pd.DataFrame, params: dict) -> pd.DataFrame:
         bars_since.append(count)
     df["bars_since_choppy"] = bars_since
 
+    # ── HTF (15m) EMA — matches Pine Script request.security(lookahead_off) ──
+    # Resample 5m → 15m, compute EMA on the 15m close series, then shift by 1
+    # so each 5m bar sees the PREVIOUSLY COMPLETED 15m bar's values.
+    htf_tf_mins  = int(params.get("htf_tf", "15"))
+    htf_fast_len = params["htf_fast_len"]
+    htf_mid_len  = params["htf_mid_len"]
+    htf_slow_len = params["htf_slow_len"]
+
+    ist_mins = ts_ist.dt.hour * 60 + ts_ist.dt.minute
+    df["_htf_key"] = (
+        ts_ist.dt.date.astype(str) + "_" +
+        (ist_mins // htf_tf_mins).astype(str)
+    )
+
+    htf_agg = (
+        df[["_htf_key", "close", "timestamp"]]
+        .groupby("_htf_key", sort=False)
+        .agg(htf_close=("close", "last"), _slot_ts=("timestamp", "first"))
+        .reset_index()
+        .sort_values("_slot_ts")
+        .reset_index(drop=True)
+    )
+
+    htf_c = htf_agg["htf_close"].values
+    htf_agg["htf_ema_fast"] = _ema(htf_c, htf_fast_len)
+    htf_agg["htf_ema_mid"]  = _ema(htf_c, htf_mid_len)
+    htf_agg["htf_ema_slow"] = _ema(htf_c, htf_slow_len)
+
+    # Shift 1 so every 5m bar within a slot sees the *previous* completed slot
+    for col in ["htf_close", "htf_ema_fast", "htf_ema_mid", "htf_ema_slow"]:
+        htf_agg[col] = htf_agg[col].shift(1)
+
+    df = df.merge(
+        htf_agg[["_htf_key", "htf_close", "htf_ema_fast", "htf_ema_mid", "htf_ema_slow"]],
+        on="_htf_key", how="left",
+    ).drop(columns=["_htf_key"])
+
+    df["htf_buy_ok"] = (
+        (df["htf_close"] > df["htf_ema_slow"]) &
+        (df["htf_ema_fast"] > df["htf_ema_mid"])
+    ).fillna(False)
+    df["htf_sell_ok"] = (
+        (df["htf_close"] < df["htf_ema_slow"]) &
+        (df["htf_ema_fast"] < df["htf_ema_mid"])
+    ).fillna(False)
+
     return df
