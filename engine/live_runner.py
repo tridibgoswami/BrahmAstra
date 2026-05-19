@@ -147,54 +147,129 @@ class LiveRunner:
         )
 
     def _warmup(self):
-        """Fetch historical data and replay bars to seed indicator state."""
-        now_ist = datetime.now(IST)
+        """
+        Two-phase startup that works correctly at 9:15 AM or mid-session:
+
+        Phase 1 — Previous days only: seed ATR / EMA / ADX with enough history.
+        Phase 2 — Today's completed bars: replay to reconstruct today's signal
+                   history, log each signal, and send a Telegram summary.
+
+        If a trade is still open after today's replay (mid-session start),
+        we warn the user and reset trade state so the engine catches the next
+        fresh signal live — we never retroactively place an order.
+        """
+        now_ist    = datetime.now(IST)
+        today_date = now_ist.date()
+
         from_dt = (now_ist - timedelta(days=self._warmup_days)).replace(
             hour=9, minute=15, second=0, microsecond=0
         )
-        to_dt = now_ist
 
         logger.info("Fetching warmup data: %s → now", from_dt.strftime("%Y-%m-%d"))
         df = self._fetcher.get_historical_data(
             self._index_cfg["token"], self._index_cfg["exchange"],
-            from_dt, to_dt, self._timeframe,
+            from_dt, now_ist, self._timeframe,
         )
 
         if df.empty:
             raise RuntimeError("Warmup fetch returned no data. Check credentials/symbol.")
 
-        # Market hours only
-        ts_ist = df["timestamp"].dt.tz_convert(IST)
+        # Market hours only (9:15 – 15:30)
+        ts_raw = df["timestamp"].dt.tz_convert(IST)
         mkt = (
-            ((ts_ist.dt.hour > 9) | ((ts_ist.dt.hour == 9) & (ts_ist.dt.minute >= 15))) &
-            ((ts_ist.dt.hour < 15) | ((ts_ist.dt.hour == 15) & (ts_ist.dt.minute <= 30)))
+            ((ts_raw.dt.hour > 9) | ((ts_raw.dt.hour == 9) & (ts_raw.dt.minute >= 15))) &
+            ((ts_raw.dt.hour < 15) | ((ts_raw.dt.hour == 15) & (ts_raw.dt.minute <= 30)))
         )
         df = df[mkt].reset_index(drop=True)
 
+        # Compute all indicators on the FULL dataset so EMA/ATR are properly seeded
+        # by previous-day history before today's bars are processed.
         df = compute_indicators(df, self._params)
+        df = df.reset_index(drop=True)      # guarantee 0-based positional index
         self._df = df
 
-        # Replay all bars — builds state without placing any orders
-        logger.info("Replaying %d warmup bars…", len(df))
-        for i in range(len(df)):
+        # Split into previous-day bars and today's bars
+        ts_ist   = df["timestamp"].dt.tz_convert(IST)
+        is_today = ts_ist.dt.date == today_date
+        prev_idx  = df.index[~is_today].tolist()
+        today_idx = df.index[is_today].tolist()
+
+        # ── Phase 1: replay previous days ─────────────────────────────────────
+        # Pure state seeding — events are discarded (state resets on each new day)
+        logger.info("Phase 1: seeding indicators with %d previous-day bars…",
+                    len(prev_idx))
+        for i in prev_idx:
             self._engine._process_bar(i, df, self._state)
 
-        first_atr = df["atr_filter"].dropna().iloc[-1] if not df.empty else 0
+        # ── Phase 2: replay today's completed bars ─────────────────────────────
+        today_events: List[Dict] = []
+        logger.info("Phase 2: replaying %d today's bar(s)…", len(today_idx))
+        for i in today_idx:
+            evs = self._engine._process_bar(i, df, self._state)
+            today_events.extend(evs)
+
+        last_atr = df["atr_filter"].dropna().iloc[-1] if not df.empty else 0.0
         logger.info(
-            "Warmup complete. Bars: %d | Latest ATR: %.2f | "
-            "State: in_buy=%s in_sell=%s",
-            len(df), first_atr,
+            "Warmup complete. prev=%d bars | today=%d bars | ATR=%.2f | "
+            "in_buy=%s in_sell=%s",
+            len(prev_idx), len(today_idx), last_atr,
             self._state["in_buy"], self._state["in_sell"],
         )
 
+        # ── Log and notify today's signal history ─────────────────────────────
+        if today_events:
+            logger.info("── Today's signal history ──────────────────────────")
+            for ev in today_events:
+                ts_str = ev["timestamp"].tz_convert(IST).strftime("%H:%M")
+                if ev["type"] in ("BUY", "SELL"):
+                    logger.info("  %s  %-4s  entry=%.2f  target=%.2f  score=%s",
+                                ts_str, ev["type"],
+                                ev["entry_price"], ev["target_price"],
+                                ev.get("quality_score", "?"))
+                else:
+                    pnl = ev.get("pnl_pts", 0.0)
+                    logger.info("  %s  %-10s  exit=%.2f  pnl=%+.2f pts",
+                                ts_str, ev["type"], ev["exit_price"], pnl)
+
+            lines = ["📊 *Today's signals so far (replay)*"]
+            for ev in today_events:
+                ts_str = ev["timestamp"].tz_convert(IST).strftime("%H:%M")
+                if ev["type"] in ("BUY", "SELL"):
+                    lines.append(
+                        f"  `{ts_str}` {ev['type']} @{ev['entry_price']:.2f}"
+                        f" → tgt {ev['target_price']:.2f}"
+                        f" (score {ev.get('quality_score', '?')}/10)"
+                    )
+                else:
+                    pnl = ev.get("pnl_pts", 0.0)
+                    icon = "✅" if pnl >= 0 else "❌"
+                    lines.append(
+                        f"  `{ts_str}` {ev['type']}"
+                        f" @{ev['exit_price']:.2f}  {icon} {pnl:+.2f} pts"
+                    )
+            self._tg.send("\n".join(lines))
+        else:
+            logger.info("No signals generated today so far.")
+
+        # ── Mid-session open trade: reset trade state, continue live ──────────
         if self._state["in_buy"] or self._state["in_sell"]:
+            direction = "BUY" if self._state["in_buy"] else "SELL"
             logger.warning(
-                "Warmup replay shows an open trade — engine started mid-session. "
-                "Signals will resume from next candle but no order was placed for "
-                "the existing warmup trade."
+                "Mid-session start: %s trade is open from today's replay "
+                "(no live order was placed for it). "
+                "Resetting trade state — engine will take next fresh signal.",
+                direction,
             )
-            # Reset so we don't try to 'exit' a trade we never entered live
-            self._engine._reset_day(self._state)
+            self._tg.send(
+                f"⚠️ *Mid-session start*\n"
+                f"A {direction} trade from today's replay is still open "
+                f"(not placed live).\n"
+                f"Engine reset — will catch the next valid signal."
+            )
+            self._engine._reset_trade(self._state)
+            self._state["in_buy"]        = False
+            self._state["in_sell"]       = False
+            self._state["allow_reentry"] = True
 
     # ─────────────────────────────────────────────────────────────────────────
     # Main market loop
