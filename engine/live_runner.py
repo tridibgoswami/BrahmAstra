@@ -514,8 +514,10 @@ class LiveRunner:
 
         # Target cancelled successfully → place market exit
         exit_dir = "SELL" if direction == "BUY" else "BUY"
-        self._order_mgr.place_market(exit_dir, qty)
-        self._close_trade_state("TRAIL_STOP", ltp)
+        mkt_id   = self._order_mgr.place_market(exit_dir, qty)
+        result   = self._order_mgr.wait_for_fill(mkt_id, timeout=30)
+        exit_px  = result.get("price") or ltp
+        self._close_trade_state("TRAIL_STOP", exit_px)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Generic exit executor
@@ -536,11 +538,11 @@ class LiveRunner:
         if tgt_id:
             self._order_mgr.cancel(tgt_id)
 
-        # Place market exit
+        # Place market exit and use actual fill price for P&L
         exit_dir = "SELL" if direction == "BUY" else "BUY"
-        self._order_mgr.place_market(exit_dir, qty)
-
-        exit_px = hint_price or self._order_mgr.get_ltp() or 0.0
+        mkt_id   = self._order_mgr.place_market(exit_dir, qty)
+        result   = self._order_mgr.wait_for_fill(mkt_id, timeout=30)
+        exit_px  = result.get("price") or hint_price or self._order_mgr.get_ltp() or 0.0
         self._close_trade_state(exit_type, exit_px)
 
     # ─────────────────────────────────────────────────────────────────────────
