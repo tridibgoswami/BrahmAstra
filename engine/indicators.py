@@ -369,6 +369,12 @@ def compute_indicators(df: pd.DataFrame, params: dict) -> pd.DataFrame:
     for col in ["htf_close", "htf_ema_fast", "htf_ema_mid", "htf_ema_slow"]:
         htf_agg[col] = htf_agg[col].shift(1)
 
+    # Drop stale HTF columns before merge — prevents pandas _x/_y rename when
+    # compute_indicators is called repeatedly (e.g. _append_and_recompute).
+    _htf_merge_cols = ["htf_close", "htf_ema_fast", "htf_ema_mid", "htf_ema_slow",
+                       "htf_buy_ok", "htf_sell_ok"]
+    df = df.drop(columns=[c for c in _htf_merge_cols if c in df.columns])
+
     df = df.merge(
         htf_agg[["_htf_key", "htf_close", "htf_ema_fast", "htf_ema_mid", "htf_ema_slow"]],
         on="_htf_key", how="left",
