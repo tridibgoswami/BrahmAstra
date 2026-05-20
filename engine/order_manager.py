@@ -197,3 +197,73 @@ class OrderManager:
 
     def qty_for_lots(self, lots: int) -> int:
         return lots * self._lot_sz
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paper-mode drop-in replacement — same interface, zero real orders
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PaperOrderManager:
+    """
+    Simulates order execution without touching the broker API.
+
+    - place_limit / place_market: log the simulated order, return a fake ID.
+    - wait_for_fill: returns instantly with the price that was passed in.
+    - cancel: always returns True (simulated cancel succeeds immediately).
+    - get_ltp: fetches real index LTP from AngelOne (needed for trail stop).
+    - get_net_qty: always 0 (no real position held).
+    """
+
+    def __init__(self, smart_api,
+                 futures_cfg: dict,
+                 index_cfg: dict,
+                 product_type: str = "MIS"):
+        self._api      = smart_api
+        self._lot_sz   = int(futures_cfg["lot_size"])
+        self._idx_token = str(index_cfg["token"])
+        self._idx_exch  = index_cfg["exchange"]
+        self._counter  = 0
+        self._prices: Dict[str, float] = {}
+
+    def _next_id(self) -> str:
+        self._counter += 1
+        return f"PAPER-{self._counter:04d}"
+
+    def place_limit(self, direction: str, price: float, qty: int) -> Optional[str]:
+        oid = self._next_id()
+        self._prices[oid] = price
+        logger.info("[PAPER] %s LIMIT @%.2f  qty=%d  → %s", direction, price, qty, oid)
+        return oid
+
+    def place_market(self, direction: str, qty: int) -> Optional[str]:
+        ltp = self.get_ltp() or 0.0
+        oid = self._next_id()
+        self._prices[oid] = ltp
+        logger.info("[PAPER] %s MARKET @~%.2f  qty=%d  → %s", direction, ltp, qty, oid)
+        return oid
+
+    def cancel(self, order_id: str) -> bool:
+        logger.info("[PAPER] cancel %s → True", order_id)
+        return True
+
+    def wait_for_fill(self, order_id: str,
+                      timeout: int = 60,
+                      poll_secs: float = 2.0) -> Dict:
+        price = self._prices.get(order_id, 0.0)
+        logger.info("[PAPER] fill %s @ %.2f (instant)", order_id, price)
+        return {"filled": True, "price": price}
+
+    def get_net_qty(self) -> int:
+        return 0
+
+    def get_ltp(self) -> Optional[float]:
+        try:
+            data = self._api.ltpData(self._idx_exch, "", self._idx_token)
+            if data and data.get("data"):
+                return float(data["data"].get("ltp", 0) or 0)
+        except Exception as exc:
+            logger.debug("ltpData failed: %s", exc)
+        return None
+
+    def qty_for_lots(self, lots: int) -> int:
+        return lots * self._lot_sz

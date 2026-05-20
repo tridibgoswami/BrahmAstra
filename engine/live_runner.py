@@ -35,7 +35,7 @@ import pytz
 
 from engine.data_fetcher import AngelOneDataFetcher
 from engine.indicators import compute_indicators
-from engine.order_manager import OrderManager
+from engine.order_manager import OrderManager, PaperOrderManager
 from engine.presets import resolve_preset
 from engine.price_monitor import PriceMonitor
 from engine.reporter import DailyReporter
@@ -58,6 +58,7 @@ class LiveRunner:
         self._warmup_days = int(trading_cfg.get("warmup_days", 25))
         self._lots        = int(trading_cfg.get("lots", 1))
         self._product     = trading_cfg.get("product_type", "MIS")
+        self._paper_mode  = bool(trading_cfg.get("paper_mode", False))
         self._buf_secs    = int(trading_cfg.get("candle_buffer_secs", 5))
         self._ltp_poll    = float(trading_cfg.get("ltp_poll_interval", 2.0))
 
@@ -131,19 +132,31 @@ class LiveRunner:
     def _connect(self):
         logger.info("Connecting to AngelOne…")
         self._fetcher.connect()
-        # Reuse the same SmartConnect object for orders
-        self._order_mgr = OrderManager(
-            smart_api   = self._fetcher._obj,
-            futures_cfg = self._instr_cfg,
-            index_cfg   = self._index_cfg,
-            product_type= self._product,
-        )
-        logger.info("Connected. Futures: %s | Lots: %d",
-                    self._instr_cfg["symbol"], self._lots)
+        if self._paper_mode:
+            self._order_mgr = PaperOrderManager(
+                smart_api    = self._fetcher._obj,
+                futures_cfg  = self._instr_cfg,
+                index_cfg    = self._index_cfg,
+                product_type = self._product,
+            )
+            logger.info("*** PAPER MODE — no real orders will be placed ***")
+        else:
+            self._order_mgr = OrderManager(
+                smart_api    = self._fetcher._obj,
+                futures_cfg  = self._instr_cfg,
+                index_cfg    = self._index_cfg,
+                product_type = self._product,
+            )
+
+        mode_tag = "📝 PAPER MODE" if self._paper_mode else "🟢 LIVE"
+        logger.info("Connected. Futures: %s | Lots: %d | Mode: %s",
+                    self._instr_cfg["symbol"], self._lots,
+                    "PAPER" if self._paper_mode else "LIVE")
         self._tg.send(
-            f"🟢 *BrahmAstra Live*\n"
+            f"{mode_tag} *BrahmAstra*\n"
             f"Symbol: {self._symbol} {self._timeframe}m | Preset: {self._preset_key}\n"
-            f"Instrument: {self._instr_cfg['symbol']} | Lots: {self._lots}"
+            f"Instrument: {self._instr_cfg['symbol']} | Lots: {self._lots}\n"
+            + ("_No real orders — simulation only_" if self._paper_mode else "")
         )
 
     def _warmup(self):
