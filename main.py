@@ -54,6 +54,9 @@ def main():
         format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
         datefmt="%H:%M:%S",
     )
+    # Suppress noisy HTTP-level debug logs from third-party libraries
+    for _noisy in ("urllib3", "urllib3.connectionpool", "requests", "smartapi"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
 
     config = load_config(args.config)
 
