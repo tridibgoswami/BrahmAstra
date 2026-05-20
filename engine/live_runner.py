@@ -422,13 +422,27 @@ class LiveRunner:
         with self._trade_lock:
             self._entry_order_id = order_id
 
-        # Wait for fill (one candle = 300 s; we give 60 s)
-        result = self._order_mgr.wait_for_fill(order_id, timeout=60)
+        # Wait until the NEXT candle closes before giving up on the limit fill.
+        # If price doesn't reach our limit within one full candle, cancel and move on.
+        now_ist  = datetime.now(IST)
+        rem      = now_ist.minute % 5
+        wait_min = (5 - rem) if rem != 0 else 5
+        next_close = (now_ist.replace(second=0, microsecond=0)
+                      + timedelta(minutes=wait_min)
+                      + timedelta(seconds=self._buf_secs))
+        fill_timeout = max(30, int((next_close - datetime.now(IST)).total_seconds()))
+
+        logger.info("Waiting up to %ds for fill (until %s)",
+                    fill_timeout, next_close.strftime("%H:%M:%S"))
+        result = self._order_mgr.wait_for_fill(order_id, timeout=fill_timeout)
         if not result["filled"]:
             self._order_mgr.cancel(order_id)
             with self._trade_lock:
                 self._entry_order_id = None
-            self._tg.send(f"⚠️ Entry not filled in 60s — order cancelled")
+            self._tg.send(
+                f"⚠️ Entry limit not filled by next candle close — order cancelled\n"
+                f"{direction} @{entry_px:.2f}"
+            )
             # Signal engine expects a trade; reset so it can re-signal next bar
             self._engine._reset_trade(self._state)
             self._state["in_buy"]  = False
