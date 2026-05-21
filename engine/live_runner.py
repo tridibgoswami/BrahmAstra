@@ -122,6 +122,28 @@ class LiveRunner:
         self._connect()
         self._tg.start_polling(self._on_command)
         self._warmup()
+
+        now = datetime.now(IST)
+        market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 15)
+        market_not_yet_open = now.hour < 9 or (now.hour == 9 and now.minute < 15)
+
+        if market_closed:
+            msg = (
+                "Market is closed for today.\n"
+                "Signal replay is complete — see history above.\n"
+                "Start again tomorrow before 09:15 IST."
+            )
+            logger.info(msg)
+            self._tg.send(f"🔴 {msg}")
+            self._tg.stop()
+            return
+
+        if market_not_yet_open:
+            logger.info(
+                "Market has not opened yet (current time %s IST). "
+                "Engine will wait for 09:15…", now.strftime("%H:%M")
+            )
+
         self._market_loop()
         self._end_of_day()
 
