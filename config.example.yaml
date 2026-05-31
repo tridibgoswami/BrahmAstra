@@ -1,0 +1,79 @@
+# BrahmAstra — example configuration file
+# Copy this to config.yaml and fill in your credentials.
+# config.yaml is gitignored and will never be committed.
+
+broker:
+  angel_one:
+    client_id:   "YOUR_CLIENT_ID"       # AngelOne Client ID
+    mpin:        "YOUR_MPIN"            # 4-digit MPIN
+    totp_secret: "YOUR_TOTP_SECRET"     # TOTP secret key (Google Authenticator)
+    api_key:     "YOUR_API_KEY"         # AngelOne SmartAPI key
+    secret_key:  "YOUR_SECRET_KEY"      # SmartAPI secret key
+
+engine:
+  symbol:    "BANKNIFTY"   # Index symbol: BANKNIFTY | NIFTY | FINNIFTY
+  timeframe: 5             # Candle timeframe in minutes (5 recommended)
+
+# ── Symbols (index) ───────────────────────────────────────────────────────────
+# Used for historical data and real-time LTP of the index
+symbols:
+  BANKNIFTY:
+    token:    "26009"
+    exchange: "NSE"
+  NIFTY:
+    token:    "26000"
+    exchange: "NSE"
+  FINNIFTY:
+    token:    "26037"
+    exchange: "NSE"
+
+# ── Futures trading config ────────────────────────────────────────────────────
+trading:
+  paper_mode:          true    # true = paper mode (no real orders); false = live
+  lots:                1       # number of lots to trade
+  product_type:        "MIS"  # MIS (intraday) or NRML (positional)
+  warmup_days:         25      # calendar days of history to seed indicators
+  candle_buffer_secs:  5       # seconds after candle close before fetching
+  ltp_poll_interval:   2.0    # seconds between LTP polls for trail stop
+
+  # Optional overrides (comment out to use preset defaults)
+  # target_pct:        1.5    # override target as % of ATR
+  # trail_trigger_pct: 0.5    # override trail trigger as % of ATR
+
+  # Futures instrument — must match AngelOne's current-week contract
+  banknifty:
+    symbol:    "BANKNIFTY25JUNFUT"   # update to current-week contract
+    token:     "XXXXXXX"             # instrument token from scrip master
+    exchange:  "NFO"
+    lot_size:  15
+
+  nifty:
+    symbol:    "NIFTY25JUNFUT"
+    token:     "XXXXXXX"
+    exchange:  "NFO"
+    lot_size:  75
+
+  finnifty:
+    symbol:    "FINNIFTY25JUNFUT"
+    token:     "XXXXXXX"
+    exchange:  "NFO"
+    lot_size:  40
+
+# ── Options selling config ────────────────────────────────────────────────────
+# Used only by: python main.py options
+# Runs completely independently of the futures engine.
+options_selling:
+  paper_mode:         true    # true = simulate; false = place real NFO orders
+  lots:               1       # number of option lots per trade
+  entry_after:        "10:00" # skip signals before this IST time (HH:MM)
+  exit_by:            "15:00" # square off all positions by this IST time (HH:MM)
+  strike_offset:      1       # OTM offset: 0 = ATM, 1 = 1-strike OTM, 2 = 2-strike OTM
+  min_premium:        50      # skip strikes with premium below this (₹ per unit)
+  stop_loss_mult:     2.0     # SL triggers when premium reaches entry × this multiple
+  target_pct:         30      # exit when premium decays to this % of entry (0 = no target)
+  ltp_poll_interval:  5.0     # seconds between option LTP polls for SL/target check
+
+# ── Telegram notifications ────────────────────────────────────────────────────
+telegram:
+  bot_token: "YOUR_BOT_TOKEN"   # from @BotFather
+  chat_id:   "YOUR_CHAT_ID"     # your Telegram user/group chat ID

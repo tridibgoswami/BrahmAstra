@@ -7,6 +7,8 @@ Commands:
   python main.py backtest --from 2026-04-21 --to 2026-04-25  (single week)
   python main.py live
   python main.py live --config config.yaml --verbose
+  python main.py options
+  python main.py options --config config.yaml --verbose
 """
 
 import argparse
@@ -42,6 +44,11 @@ def main():
     lv.add_argument("--config",  default="config.yaml", help="Config file path")
     lv.add_argument("--verbose", action="store_true",   help="Debug logging")
 
+    # ── options ───────────────────────────────────────────────────────────────
+    op = sub.add_parser("options", help="Run independent options selling engine")
+    op.add_argument("--config",  default="config.yaml", help="Config file path")
+    op.add_argument("--verbose", action="store_true",   help="Debug logging")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -67,6 +74,11 @@ def main():
     elif args.command == "live":
         from engine.live_runner import LiveRunner
         runner = LiveRunner(config)
+        runner.start()
+
+    elif args.command == "options":
+        from engine.options_runner import OptionsRunner
+        runner = OptionsRunner(config)
         runner.start()
 
 
